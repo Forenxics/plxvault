@@ -13,16 +13,16 @@
 
 /* version: $Id$ */
 .content {
-	background: #ffffff;
+	background: var(--ra-bg-content, #ffffff);
 	height: 100%;
 	margin: 50px 10% 30px 10%;
-	border-radius: 15px;
+	border-radius: var(--ra-radius-lg, 15px);
 }
 
 .header {
 	margin: 0;
 	color: #333;
-	padding: 1.5em 5em 0;
+	padding: var(--ra-spacing-lg) 5em 0;
 	border-bottom: 1px solid #eee;
 	text-align: center;
 }
@@ -31,7 +31,7 @@
 	margin: 0.2em 0;
 	font-size: 3em;
 	font-weight: 300;
-	color: #1f589f;
+	color: var(--ra-primary, #1f589f);
 }
 
 .content-body {
@@ -46,12 +46,12 @@
 	margin: 0.2em 0;
 	font-size: 1.4em;
 	font-weight: 300;
-	color: #1f589f;
+	color: var(--ra-primary, #1f589f);
 }
 
 .content-body h3 {
 	margin: 0.2em 0;
-	color: #1f589f;
+	color: var(--ra-primary, #1f589f);
 }
 
 .content-body pure-table td, .content-body pure-table th {
@@ -130,9 +130,9 @@
 }
 
 .ra-button {
-	margin: 0.25em 0.25em;
-	background: #ededed;
-	color: #212021;
+	margin: var(--ra-spacing-xs) var(--ra-spacing-xs);
+	background: var(--ra-bg-menu, #ededed);
+	color: var(--ra-text-primary, #212021);
 }
 
 .ra-outputText {
@@ -175,11 +175,11 @@
 }
 
 .statusApproved {
-	color: #53983d;
+	color: var(--ra-status-success, #53983d);
 }
 
 .statusFailed {
-	color: #e53e33;
+	color: var(--ra-status-error, #e53e33);
 }
 
 .editLogEntry {
@@ -188,21 +188,22 @@
 }
 
 .tabButtonBar {
-	border-bottom: 0.2ex solid #1e599f;
+	border-bottom: 0.2ex solid var(--ra-primary-dark, #1e599f);
 }
 
 .tabButton {
-	background: #ededed;
-	color: #000;
-	padding: 0.5em;
-	margin: 0 0.25em;
+	background: var(--ra-bg-menu, #ededed);
+	color: var(--ra-text-primary, #000);
+	padding: var(--ra-spacing-sm);
+	margin: 0 var(--ra-spacing-xs);
 	border: 0 none;
 	display: inline-block;
+	transition: background-color var(--ra-transition-fast);
 }
 
 .tabButton.active {
-	background: #1e599f;
-	color: #fff;
+	background: var(--ra-primary-dark, #1e599f);
+	color: var(--ra-text-light, #fff);
 }
 
 .approvalControl {
@@ -218,10 +219,11 @@
 	padding: 0;
 	outline: none;
 	outline-offset: 0;
-	color: #e9af13;
+	color: var(--ra-accent, #e9af13);
 	cursor: pointer;
 	line-height: inherit;
 	float: right;
+	transition: color var(--ra-transition-fast);
 }
 
 .toggleMoreButton::-moz-focus-inner {
@@ -273,17 +275,18 @@
 /* CSS specific for the top menu */
 .ejbca-menu {
 	height: 2em;
-	background: #ededed;
-	color: #212021;
+	background: var(--ra-bg-menu, #ededed);
+	color: var(--ra-text-primary, #212021);
 }
 
 .pure-menu-link, .language_button {
-	color: #212021;
-	font-size: 0.875em;
+	color: var(--ra-text-primary, #212021);
+	font-size: var(--ra-font-size-base, 0.875em);
+	transition: background-color var(--ra-transition-fast), color var(--ra-transition-fast);
 }
 
 .pure-menu-item {
-	background: #ededed;
+	background: var(--ra-bg-menu, #ededed);
 }
 
 .pure-menu-link:hover, .pure-menu-link:focus {
@@ -312,9 +315,9 @@ img.menu_logo {
 
 /* CSS Specific for the bottom menu */
 .footer {
-	background: #ededed;
-	color: #212021;
-	font-size: 0.875em;
+	background: var(--ra-bg-menu, #ededed);
+	color: var(--ra-text-primary, #212021);
+	font-size: var(--ra-font-size-base, 0.875em);
 	padding: 1px;
 }
 

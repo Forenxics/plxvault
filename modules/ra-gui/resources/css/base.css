@@ -13,6 +13,58 @@
 
 /* version: $Id$ */
 
+/*--------------------------------------------------------------------------*/
+/* CSS CUSTOM PROPERTIES (Variables) for RA GUI theming */
+:root {
+	/* Primary colors */
+	--ra-primary: #1f589f;
+	--ra-primary-dark: #1e599f;
+	--ra-accent: #e9af13;
+	--ra-accent-hover: #d0a644;
+
+	/* Background colors */
+	--ra-bg-main: #637b98;
+	--ra-bg-content: #ffffff;
+	--ra-bg-frame: #4f6177;
+	--ra-bg-menu: #ededed;
+	--ra-bg-menu-dropdown: #517397;
+
+	/* Text colors */
+	--ra-text-primary: #212021;
+	--ra-text-light: #ffffff;
+	--ra-text-muted: #aaa;
+
+	/* Status colors */
+	--ra-status-success: #53983d;
+	--ra-status-error: #e53e33;
+	--ra-status-warning: #ee1111;
+
+	/* Borders and dividers */
+	--ra-border-accent: #fcba00;
+
+	/* Spacing */
+	--ra-spacing-xs: 0.25em;
+	--ra-spacing-sm: 0.5em;
+	--ra-spacing-md: 1em;
+	--ra-spacing-lg: 1.5em;
+	--ra-spacing-xl: 2em;
+
+	/* Border radius */
+	--ra-radius-sm: 2px;
+	--ra-radius-md: 5px;
+	--ra-radius-lg: 15px;
+
+	/* Typography */
+	--ra-font-family: Helvetica, Arial, sans-serif;
+	--ra-font-size-base: 0.875em;
+	--ra-font-size-sm: 0.75em;
+	--ra-font-size-lg: 1.1em;
+
+	/* Transitions */
+	--ra-transition-fast: 0.2s ease;
+	--ra-transition-normal: 0.3s ease;
+}
+
 .rtlDirection { direction: rtl; }
 .ltrDirection { direction: ltr; }
 
