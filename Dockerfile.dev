@@ -1,17 +1,42 @@
 # Development Dockerfile to test UI changes
 FROM keyfactor/ejbca-ce:latest
 
-# Copy modernized CSS files for admin-gui
-COPY modules/admin-gui/resources/themes/default_theme.css \
-     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/adminweb.war/themes/default_theme.css
+USER root
 
-# Copy modernized CSS files for ra-gui
-COPY modules/ra-gui/resources/css/base.css \
-     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/css/base.css
+# Install zip/unzip for WAR manipulation
+RUN microdnf install -y zip unzip && microdnf clean all
 
-COPY modules/ra-gui/resources/css/ra.css \
-     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/css/ra.css
+# Set working directory
+WORKDIR /opt/keyfactor/ejbca/dist/ejbca.ear
 
-# Copy modernized JavaScript for ra-gui
-COPY modules/ra-gui/resources/js/common.js \
-     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/js/common.js
+# Copy modernized files to temp location
+COPY modules/admin-gui/resources/themes/default_theme.css /tmp/default_theme.css
+COPY modules/ra-gui/resources/css/base.css /tmp/base.css
+COPY modules/ra-gui/resources/css/ra.css /tmp/ra.css
+COPY modules/ra-gui/resources/js/common.js /tmp/common.js
+
+# Update adminweb.war with new CSS
+RUN mkdir -p /tmp/adminweb && \
+    cd /tmp/adminweb && \
+    unzip -q /opt/keyfactor/ejbca/dist/ejbca.ear/adminweb.war && \
+    cp /tmp/default_theme.css themes/default_theme.css && \
+    zip -qr /opt/keyfactor/ejbca/dist/ejbca.ear/adminweb.war . && \
+    rm -rf /tmp/adminweb
+
+# Update ra-gui.war with new CSS and JS
+RUN mkdir -p /tmp/ragui && \
+    cd /tmp/ragui && \
+    unzip -q /opt/keyfactor/ejbca/dist/ejbca.ear/ra-gui.war && \
+    cp /tmp/base.css css/base.css && \
+    cp /tmp/ra.css css/ra.css && \
+    cp /tmp/common.js js/common.js && \
+    zip -qr /opt/keyfactor/ejbca/dist/ejbca.ear/ra-gui.war . && \
+    rm -rf /tmp/ragui
+
+# Clean up temp files
+RUN rm -f /tmp/*.css /tmp/*.js
+
+# Switch back to non-root user
+USER 10001
+
+WORKDIR /opt/keyfactor
