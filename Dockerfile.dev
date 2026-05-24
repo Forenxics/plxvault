@@ -1,0 +1,17 @@
+# Development Dockerfile to test UI changes
+FROM keyfactor/ejbca-ce:latest
+
+# Copy modernized CSS files for admin-gui
+COPY modules/admin-gui/resources/themes/default_theme.css \
+     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/adminweb.war/themes/default_theme.css
+
+# Copy modernized CSS files for ra-gui
+COPY modules/ra-gui/resources/css/base.css \
+     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/css/base.css
+
+COPY modules/ra-gui/resources/css/ra.css \
+     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/css/ra.css
+
+# Copy modernized JavaScript for ra-gui
+COPY modules/ra-gui/resources/js/common.js \
+     /opt/keyfactor/ejbca/standalone/deployments/ejbca.ear/ra-gui.war/js/common.js
