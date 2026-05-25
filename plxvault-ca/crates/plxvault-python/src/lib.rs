@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 
-use plxvault_core::{
+use ::plxvault_core::{
     keys::{KeyAlgorithm, KeyPair},
     certs::{CertificateAuthority, CertificateRequest, IssuedCertificate, KeyUsage, ExtendedKeyUsage},
 };
