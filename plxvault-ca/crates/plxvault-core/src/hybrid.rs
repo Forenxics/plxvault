@@ -39,6 +39,7 @@ impl HybridKeyPair {
                 let ecdsa_kp = EcdsaKeyPair::from_pkcs8(
                     &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
                     ecdsa_pkcs8.as_ref(),
+                    &rng,
                 )
                 .map_err(|e| Error::KeyGeneration(e.to_string()))?;
 
@@ -95,6 +96,7 @@ impl HybridKeyPair {
                 let kp = EcdsaKeyPair::from_pkcs8(
                     &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
                     &self.classical_private,
+                    &rng,
                 )
                 .map_err(|e| Error::Signing(e.to_string()))?;
 

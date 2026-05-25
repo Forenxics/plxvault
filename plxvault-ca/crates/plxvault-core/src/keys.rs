@@ -119,6 +119,7 @@ impl KeyPair {
         let key_pair = EcdsaKeyPair::from_pkcs8(
             &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
             pkcs8.as_ref(),
+            rng,
         )
         .map_err(|e| Error::KeyGeneration(e.to_string()))?;
 
@@ -140,6 +141,7 @@ impl KeyPair {
         let key_pair = EcdsaKeyPair::from_pkcs8(
             &signature::ECDSA_P384_SHA384_ASN1_SIGNING,
             pkcs8.as_ref(),
+            rng,
         )
         .map_err(|e| Error::KeyGeneration(e.to_string()))?;
 
