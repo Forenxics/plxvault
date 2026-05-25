@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ejbca": {
+      "command": "python",
+      "args": ["D:\\gits\\plxvault\\mcp-pki-server\\ejbca_server.py"],
+      "env": {
+        "EJBCA_URL": "https://localhost:8443/ejbca",
+        "EJBCA_CERT": "",
+        "EJBCA_KEY": ""
+      }
+    }
+  }
+}
