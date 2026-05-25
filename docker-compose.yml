@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # EJBCA - Enterprise PKI (existing setup)
   ejbca:
@@ -47,6 +45,8 @@ services:
       - step-ca-data:/home/step
       - ./certs:/certs
     entrypoint: ["sleep", "infinity"]
+    tty: true
+    stdin_open: true
     networks:
       - pki-network
 
