@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # EJBCA - Enterprise PKI (existing setup)
+  ejbca:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: ejbca-dev
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      - TLS_SETUP_ENABLED=simple
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ejbca/publicweb/healthcheck/ejbcahealth"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - pki-network
+
+  # step-ca - Modern lightweight CA
+  step-ca:
+    image: smallstep/step-ca:latest
+    container_name: step-ca
+    ports:
+      - "9000:9000"
+    volumes:
+      - step-ca-data:/home/step
+      - ./step-ca-config:/home/step/config
+    environment:
+      - DOCKER_STEPCA_INIT_NAME=PlxVault CA
+      - DOCKER_STEPCA_INIT_DNS_NAMES=localhost,step-ca
+      - DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT=true
+      - DOCKER_STEPCA_INIT_ACME=true
+    networks:
+      - pki-network
+
+  # step-cli - CLI tool for interacting with step-ca
+  step-cli:
+    image: smallstep/step-cli:latest
+    container_name: step-cli
+    depends_on:
+      - step-ca
+    volumes:
+      - step-ca-data:/home/step
+      - ./certs:/certs
+    entrypoint: ["sleep", "infinity"]
+    networks:
+      - pki-network
+
+networks:
+  pki-network:
+    driver: bridge
+
+volumes:
+  step-ca-data:
