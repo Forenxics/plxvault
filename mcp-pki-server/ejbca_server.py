@@ -834,7 +834,7 @@ def get_expiring_certificates(args: dict) -> dict:
     """Get certificates expiring soon."""
     days = args.get("days", 30)
 
-    # Try REST API first
+    # Try REST API first (Enterprise only)
     success, result = ejbca_api_call("GET", f"certificate/expire?days={days}")
 
     if success:
@@ -848,25 +848,23 @@ def get_expiring_certificates(args: dict) -> dict:
             "message": f"{len(certs)} certificate(s) expiring within {days} days"
         }
 
-    # CLI fallback - list all certs and filter (limited but works in CE)
-    cli_success, cli_output = ejbca_cli(["ca", "listexpired", "--days", str(days)])
-    if cli_success:
-        lines = [l.strip() for l in cli_output.strip().split("\n") if l.strip()]
-        return {
-            "success": True,
-            "days": days,
-            "certificates": lines,
-            "count": len(lines),
-            "message": f"Found {len(lines)} certificate(s) expiring within {days} days",
-            "source": "cli"
-        }
-
-    # If listexpired doesn't exist, provide guidance
+    # Community Edition doesn't have this REST endpoint or CLI command
+    # Provide clear guidance
     return {
         "success": False,
-        "error": "REST API disabled in Community Edition",
-        "workaround": "Use Admin GUI: RA Functions → Search End Entities → Filter by expiry",
-        "api_error": result
+        "limitation": "Certificate expiration search requires EJBCA Enterprise Edition REST API",
+        "workarounds": [
+            "1. Admin GUI: RA Functions → Search End Entities → Status filter",
+            "2. Admin GUI: CA Functions → Search Certificates",
+            "3. Set up Certificate Expiration Notifier service for email alerts",
+            f"4. Direct database query (if you have DB access)"
+        ],
+        "setup_notifications": {
+            "path": "System Functions → Services → Add",
+            "type": "Certificate Expiration Notifier",
+            "description": "Sends email alerts before certificates expire"
+        },
+        "gui_url": f"{EJBCA_URL}/adminweb/ra/listendentities.xhtml"
     }
 
 
