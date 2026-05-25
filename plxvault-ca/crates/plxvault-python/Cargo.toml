@@ -1,0 +1,16 @@
+[package]
+name = "plxvault-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "PlxVault CA - Python bindings"
+
+[lib]
+name = "plxvault_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+plxvault-core = { path = "../plxvault-core" }
+pyo3 = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,26 @@
+[package]
+name = "plxvault-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "PlxVault CA - Core cryptographic operations"
+
+[dependencies]
+rcgen = { workspace = true }
+ring = { workspace = true }
+x509-parser = { workspace = true }
+pem = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+pqcrypto-dilithium = { workspace = true }
+pqcrypto-kyber = { workspace = true }
+pqcrypto-traits = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
