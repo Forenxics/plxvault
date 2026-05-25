@@ -112,6 +112,8 @@ pub struct IssuedCertificate {
 /// Certificate Authority for issuing certificates
 pub struct CertificateAuthority {
     certificate: Certificate,
+    key_pair: RcgenKeyPair,
+    params: CertificateParams,
     cert_pem: String,
     key_algorithm: KeyAlgorithm,
 }
@@ -149,20 +151,16 @@ impl CertificateAuthority {
 
         // Generate key pair
         let key_pair = Self::generate_rcgen_keypair(algorithm)?;
-        params.key_pair = Some(key_pair);
 
         // Self-sign
-        let cert = Certificate::from_params(params)
+        let cert = params
+            .self_signed(&key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        let cert_pem = cert
-            .serialize_pem()
-            .map_err(|e| Error::Signing(e.to_string()))?;
+        let cert_pem = cert.pem();
+        let key_pem = key_pair.serialize_pem();
 
-        let key_pem = cert.serialize_private_key_pem();
-
-        let serial = cert
-            .get_params()
+        let serial = params
             .serial_number
             .as_ref()
             .map(|s| hex::encode(s.as_ref()))
@@ -175,8 +173,8 @@ impl CertificateAuthority {
             certificate_pem: cert_pem.clone(),
             private_key_pem: Some(key_pem),
             chain_pem: None,
-            not_before: cert.get_params().not_before.unix_timestamp() as u64,
-            not_after: cert.get_params().not_after.unix_timestamp() as u64,
+            not_before: params.not_before.unix_timestamp() as u64,
+            not_after: params.not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: common_name.to_string(),
             issuer_dn: common_name.to_string(),
@@ -186,6 +184,8 @@ impl CertificateAuthority {
         Ok((
             Self {
                 certificate: cert,
+                key_pair,
+                params,
                 cert_pem,
                 key_algorithm: algorithm,
             },
@@ -225,22 +225,18 @@ impl CertificateAuthority {
             KeyUsagePurpose::DigitalSignature,
         ];
 
-        // Generate key pair
+        // Generate key pair for intermediate
         let key_pair = Self::generate_rcgen_keypair(algorithm)?;
-        params.key_pair = Some(key_pair);
 
-        // Create and sign with parent CA
-        let cert = Certificate::from_params(params)
+        // Sign with parent CA
+        let cert = params
+            .signed_by(&key_pair, &self.certificate, &self.key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        let cert_pem = cert
-            .serialize_pem_with_signer(&self.certificate)
-            .map_err(|e| Error::Signing(e.to_string()))?;
+        let cert_pem = cert.pem();
+        let key_pem = key_pair.serialize_pem();
 
-        let key_pem = cert.serialize_private_key_pem();
-
-        let serial = cert
-            .get_params()
+        let serial = params
             .serial_number
             .as_ref()
             .map(|s| hex::encode(s.as_ref()))
@@ -252,8 +248,7 @@ impl CertificateAuthority {
         let chain_pem = format!("{}\n{}", cert_pem, self.cert_pem);
 
         let parent_cn = self
-            .certificate
-            .get_params()
+            .params
             .distinguished_name
             .get(&DnType::CommonName)
             .map(|s| s.to_string())
@@ -264,8 +259,8 @@ impl CertificateAuthority {
             certificate_pem: cert_pem.clone(),
             private_key_pem: Some(key_pem),
             chain_pem: Some(chain_pem),
-            not_before: cert.get_params().not_before.unix_timestamp() as u64,
-            not_after: cert.get_params().not_after.unix_timestamp() as u64,
+            not_before: params.not_before.unix_timestamp() as u64,
+            not_after: params.not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: common_name.to_string(),
             issuer_dn: parent_cn,
@@ -275,6 +270,8 @@ impl CertificateAuthority {
         Ok((
             Self {
                 certificate: cert,
+                key_pair,
+                params,
                 cert_pem,
                 key_algorithm: algorithm,
             },
@@ -311,11 +308,11 @@ impl CertificateAuthority {
 
         // Always include CN as SAN for TLS compatibility
         if !request.san_dns.contains(&request.common_name) {
-            sans.push(SanType::DnsName(request.common_name.clone()));
+            sans.push(SanType::DnsName(request.common_name.clone().try_into().map_err(|e| Error::Parsing(format!("{:?}", e)))?));
         }
 
         for dns in &request.san_dns {
-            sans.push(SanType::DnsName(dns.clone()));
+            sans.push(SanType::DnsName(dns.clone().try_into().map_err(|e| Error::Parsing(format!("{:?}", e)))?));
         }
         for ip in &request.san_ips {
             if let Ok(ip_addr) = ip.parse() {
@@ -323,10 +320,10 @@ impl CertificateAuthority {
             }
         }
         for email in &request.san_emails {
-            sans.push(SanType::Rfc822Name(email.clone()));
+            sans.push(SanType::Rfc822Name(email.clone().try_into().map_err(|e| Error::Parsing(format!("{:?}", e)))?));
         }
         for uri in &request.san_uris {
-            sans.push(SanType::URI(uri.clone()));
+            sans.push(SanType::URI(uri.clone().try_into().map_err(|e| Error::Parsing(format!("{:?}", e)))?));
         }
         params.subject_alt_names = sans;
 
@@ -373,23 +370,18 @@ impl CertificateAuthority {
             })
             .collect();
 
-        // Generate key pair
+        // Generate key pair for the certificate
         let key_pair = Self::generate_rcgen_keypair(self.key_algorithm)?;
-        params.key_pair = Some(key_pair);
-
-        // Create certificate
-        let cert = Certificate::from_params(params)
-            .map_err(|e| Error::Signing(e.to_string()))?;
 
         // Sign with CA
-        let cert_pem = cert
-            .serialize_pem_with_signer(&self.certificate)
+        let cert = params
+            .signed_by(&key_pair, &self.certificate, &self.key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
-        let key_pem = cert.serialize_private_key_pem();
+        let cert_pem = cert.pem();
+        let key_pem = key_pair.serialize_pem();
 
-        let serial = cert
-            .get_params()
+        let serial = params
             .serial_number
             .as_ref()
             .map(|s| hex::encode(s.as_ref()))
@@ -401,8 +393,7 @@ impl CertificateAuthority {
         let chain_pem = format!("{}\n{}", cert_pem, self.cert_pem);
 
         let issuer_cn = self
-            .certificate
-            .get_params()
+            .params
             .distinguished_name
             .get(&DnType::CommonName)
             .map(|s| s.to_string())
@@ -413,8 +404,8 @@ impl CertificateAuthority {
             certificate_pem: cert_pem,
             private_key_pem: Some(key_pem),
             chain_pem: Some(chain_pem),
-            not_before: cert.get_params().not_before.unix_timestamp() as u64,
-            not_after: cert.get_params().not_after.unix_timestamp() as u64,
+            not_before: params.not_before.unix_timestamp() as u64,
+            not_after: params.not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: request.common_name,
             issuer_dn: issuer_cn,
@@ -429,8 +420,7 @@ impl CertificateAuthority {
 
     /// Get CA common name
     pub fn common_name(&self) -> String {
-        self.certificate
-            .get_params()
+        self.params
             .distinguished_name
             .get(&DnType::CommonName)
             .map(|s| s.to_string())
@@ -439,11 +429,11 @@ impl CertificateAuthority {
 
     fn generate_rcgen_keypair(algorithm: KeyAlgorithm) -> Result<RcgenKeyPair> {
         match algorithm {
-            KeyAlgorithm::EcdsaP256 => RcgenKeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)
+            KeyAlgorithm::EcdsaP256 => RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
                 .map_err(|e| Error::KeyGeneration(e.to_string())),
-            KeyAlgorithm::EcdsaP384 => RcgenKeyPair::generate(&rcgen::PKCS_ECDSA_P384_SHA384)
+            KeyAlgorithm::EcdsaP384 => RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384)
                 .map_err(|e| Error::KeyGeneration(e.to_string())),
-            KeyAlgorithm::Ed25519 => RcgenKeyPair::generate(&rcgen::PKCS_ED25519)
+            KeyAlgorithm::Ed25519 => RcgenKeyPair::generate_for(&rcgen::PKCS_ED25519)
                 .map_err(|e| Error::KeyGeneration(e.to_string())),
             _ => Err(Error::UnsupportedAlgorithm(format!(
                 "Algorithm {:?} not supported for certificate generation with rcgen",
