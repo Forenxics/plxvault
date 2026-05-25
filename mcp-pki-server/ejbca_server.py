@@ -834,6 +834,7 @@ def get_expiring_certificates(args: dict) -> dict:
     """Get certificates expiring soon."""
     days = args.get("days", 30)
 
+    # Try REST API first
     success, result = ejbca_api_call("GET", f"certificate/expire?days={days}")
 
     if success:
@@ -847,7 +848,26 @@ def get_expiring_certificates(args: dict) -> dict:
             "message": f"{len(certs)} certificate(s) expiring within {days} days"
         }
 
-    return {"success": False, "error": result}
+    # CLI fallback - list all certs and filter (limited but works in CE)
+    cli_success, cli_output = ejbca_cli(["ca", "listexpired", "--days", str(days)])
+    if cli_success:
+        lines = [l.strip() for l in cli_output.strip().split("\n") if l.strip()]
+        return {
+            "success": True,
+            "days": days,
+            "certificates": lines,
+            "count": len(lines),
+            "message": f"Found {len(lines)} certificate(s) expiring within {days} days",
+            "source": "cli"
+        }
+
+    # If listexpired doesn't exist, provide guidance
+    return {
+        "success": False,
+        "error": "REST API disabled in Community Edition",
+        "workaround": "Use Admin GUI: RA Functions → Search End Entities → Filter by expiry",
+        "api_error": result
+    }
 
 
 def list_cas(args: dict) -> dict:
@@ -867,13 +887,41 @@ def list_cas(args: dict) -> dict:
 
 def health_check(args: dict) -> dict:
     """Check EJBCA health."""
-    success, result = ejbca_api_call("GET", "../publicweb/healthcheck/ejbcahealth")
+    # Use direct URL, not REST API path
+    health_url = f"{EJBCA_URL}/publicweb/healthcheck/ejbcahealth"
 
-    return {
-        "success": success,
-        "status": "healthy" if success else "unhealthy",
-        "details": result
-    }
+    try:
+        ctx = create_ssl_context()
+        request = urllib.request.Request(health_url, method="GET")
+        with urllib.request.urlopen(request, context=ctx, timeout=10) as response:
+            body = response.read().decode('utf-8')
+            return {
+                "success": True,
+                "status": "healthy",
+                "details": body
+            }
+    except urllib.error.HTTPError as e:
+        return {
+            "success": False,
+            "status": "unhealthy",
+            "http_code": e.code,
+            "details": e.read().decode('utf-8') if e.fp else str(e)
+        }
+    except Exception as e:
+        # Try CLI fallback
+        cli_success, cli_output = ejbca_cli(["ca", "listcas"])
+        if cli_success:
+            return {
+                "success": True,
+                "status": "healthy",
+                "details": "EJBCA responding via CLI",
+                "cas_found": True
+            }
+        return {
+            "success": False,
+            "status": "unhealthy",
+            "details": str(e)
+        }
 
 
 def suggest_profiles(args: dict) -> dict:
