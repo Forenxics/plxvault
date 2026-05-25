@@ -113,7 +113,7 @@ pub struct IssuedCertificate {
 pub struct CertificateAuthority {
     certificate: Certificate,
     key_pair: RcgenKeyPair,
-    params: CertificateParams,
+    common_name: String,
     cert_pem: String,
     key_algorithm: KeyAlgorithm,
 }
@@ -152,19 +152,22 @@ impl CertificateAuthority {
         // Generate key pair
         let key_pair = Self::generate_rcgen_keypair(algorithm)?;
 
-        // Self-sign
+        // Save values before params is consumed
+        let not_before = params.not_before;
+        let not_after = params.not_after;
+        let serial = params
+            .serial_number
+            .as_ref()
+            .map(|s| hex::encode(s.as_ref()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Self-sign (consumes params)
         let cert = params
             .self_signed(&key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
 
         let cert_pem = cert.pem();
         let key_pem = key_pair.serialize_pem();
-
-        let serial = params
-            .serial_number
-            .as_ref()
-            .map(|s| hex::encode(s.as_ref()))
-            .unwrap_or_else(|| "unknown".to_string());
 
         let fingerprint = Self::calculate_fingerprint_from_pem(&cert_pem)?;
 
@@ -173,8 +176,8 @@ impl CertificateAuthority {
             certificate_pem: cert_pem.clone(),
             private_key_pem: Some(key_pem),
             chain_pem: None,
-            not_before: params.not_before.unix_timestamp() as u64,
-            not_after: params.not_after.unix_timestamp() as u64,
+            not_before: not_before.unix_timestamp() as u64,
+            not_after: not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: common_name.to_string(),
             issuer_dn: common_name.to_string(),
@@ -185,7 +188,7 @@ impl CertificateAuthority {
             Self {
                 certificate: cert,
                 key_pair,
-                params,
+                common_name: common_name.to_string(),
                 cert_pem,
                 key_algorithm: algorithm,
             },
@@ -228,7 +231,16 @@ impl CertificateAuthority {
         // Generate key pair for intermediate
         let key_pair = Self::generate_rcgen_keypair(algorithm)?;
 
-        // Sign with parent CA
+        // Save values before params is consumed
+        let not_before = params.not_before;
+        let not_after = params.not_after;
+        let serial = params
+            .serial_number
+            .as_ref()
+            .map(|s| hex::encode(s.as_ref()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Sign with parent CA (consumes params)
         let cert = params
             .signed_by(&key_pair, &self.certificate, &self.key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
@@ -236,34 +248,21 @@ impl CertificateAuthority {
         let cert_pem = cert.pem();
         let key_pem = key_pair.serialize_pem();
 
-        let serial = params
-            .serial_number
-            .as_ref()
-            .map(|s| hex::encode(s.as_ref()))
-            .unwrap_or_else(|| "unknown".to_string());
-
         let fingerprint = Self::calculate_fingerprint_from_pem(&cert_pem)?;
 
         // Build chain
         let chain_pem = format!("{}\n{}", cert_pem, self.cert_pem);
-
-        let parent_cn = self
-            .params
-            .distinguished_name
-            .get(&DnType::CommonName)
-            .map(|s| s.to_string())
-            .unwrap_or_default();
 
         let issued = IssuedCertificate {
             serial_number: serial,
             certificate_pem: cert_pem.clone(),
             private_key_pem: Some(key_pem),
             chain_pem: Some(chain_pem),
-            not_before: params.not_before.unix_timestamp() as u64,
-            not_after: params.not_after.unix_timestamp() as u64,
+            not_before: not_before.unix_timestamp() as u64,
+            not_after: not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: common_name.to_string(),
-            issuer_dn: parent_cn,
+            issuer_dn: self.common_name.clone(),
             key_algorithm: algorithm,
         };
 
@@ -271,7 +270,7 @@ impl CertificateAuthority {
             Self {
                 certificate: cert,
                 key_pair,
-                params,
+                common_name: common_name.to_string(),
                 cert_pem,
                 key_algorithm: algorithm,
             },
@@ -373,7 +372,16 @@ impl CertificateAuthority {
         // Generate key pair for the certificate
         let key_pair = Self::generate_rcgen_keypair(self.key_algorithm)?;
 
-        // Sign with CA
+        // Save values before params is consumed
+        let not_before = params.not_before;
+        let not_after = params.not_after;
+        let serial = params
+            .serial_number
+            .as_ref()
+            .map(|s| hex::encode(s.as_ref()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Sign with CA (consumes params)
         let cert = params
             .signed_by(&key_pair, &self.certificate, &self.key_pair)
             .map_err(|e| Error::Signing(e.to_string()))?;
@@ -381,34 +389,21 @@ impl CertificateAuthority {
         let cert_pem = cert.pem();
         let key_pem = key_pair.serialize_pem();
 
-        let serial = params
-            .serial_number
-            .as_ref()
-            .map(|s| hex::encode(s.as_ref()))
-            .unwrap_or_else(|| "unknown".to_string());
-
         let fingerprint = Self::calculate_fingerprint_from_pem(&cert_pem)?;
 
         // Build chain
         let chain_pem = format!("{}\n{}", cert_pem, self.cert_pem);
-
-        let issuer_cn = self
-            .params
-            .distinguished_name
-            .get(&DnType::CommonName)
-            .map(|s| s.to_string())
-            .unwrap_or_default();
 
         Ok(IssuedCertificate {
             serial_number: serial,
             certificate_pem: cert_pem,
             private_key_pem: Some(key_pem),
             chain_pem: Some(chain_pem),
-            not_before: params.not_before.unix_timestamp() as u64,
-            not_after: params.not_after.unix_timestamp() as u64,
+            not_before: not_before.unix_timestamp() as u64,
+            not_after: not_after.unix_timestamp() as u64,
             fingerprint_sha256: fingerprint,
             subject_dn: request.common_name,
-            issuer_dn: issuer_cn,
+            issuer_dn: self.common_name.clone(),
             key_algorithm: self.key_algorithm,
         })
     }
@@ -420,11 +415,7 @@ impl CertificateAuthority {
 
     /// Get CA common name
     pub fn common_name(&self) -> String {
-        self.params
-            .distinguished_name
-            .get(&DnType::CommonName)
-            .map(|s| s.to_string())
-            .unwrap_or_default()
+        self.common_name.clone()
     }
 
     fn generate_rcgen_keypair(algorithm: KeyAlgorithm) -> Result<RcgenKeyPair> {

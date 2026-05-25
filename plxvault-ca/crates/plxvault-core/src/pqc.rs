@@ -5,7 +5,7 @@
 //! - ML-KEM (formerly Kyber) - Key encapsulation
 
 use pqcrypto_dilithium::{dilithium2, dilithium3, dilithium5};
-use pqcrypto_traits::sign::{PublicKey, SecretKey, SignedMessage, DetachedSignature};
+use pqcrypto_traits::sign::{PublicKey, SecretKey, DetachedSignature};
 
 use crate::error::{Error, Result};
 
