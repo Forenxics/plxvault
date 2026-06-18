@@ -197,6 +197,20 @@ impl PyCertificateAuthority {
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
+    /// Reconstruct a CA from stored certificate and private key PEM
+    ///
+    /// Use this to restore a CA after server restart.
+    #[staticmethod]
+    fn from_stored(
+        certificate_pem: &str,
+        private_key_pem: &str,
+        algorithm: PyKeyAlgorithm,
+    ) -> PyResult<Self> {
+        CertificateAuthority::from_stored(certificate_pem, private_key_pem, algorithm.0)
+            .map(|ca| Self { inner: ca })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
     /// Create an intermediate CA signed by this CA
     #[pyo3(signature = (common_name, algorithm, validity_years=5, path_length=0, organization=None))]
     fn create_intermediate(

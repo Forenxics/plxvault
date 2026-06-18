@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from plxvault.api.routes import certificates, cas, health
+from plxvault.api.routes.cas import load_cas_from_database
 from plxvault.config import settings
 from plxvault.db import init_db, close_db
 
@@ -31,6 +32,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize SQLite database
     await init_db(settings.database_path)
     logger.info("Database initialized", path=settings.database_path)
+
+    # Load existing CAs from database
+    try:
+        loaded_count = await load_cas_from_database()
+        logger.info("CAs loaded from database", count=loaded_count)
+    except Exception as e:
+        logger.warning("Failed to load CAs from database", error=str(e))
 
     yield
 

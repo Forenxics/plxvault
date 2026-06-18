@@ -3,6 +3,7 @@
 from typing import List, Optional
 from datetime import datetime
 from enum import Enum
+import structlog
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -10,9 +11,52 @@ from pydantic import BaseModel, Field
 from plxvault.db import CARepository
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 # In-memory cache for CA signing objects (reconstructed from DB on demand)
 _ca_cache: dict = {}
+
+
+async def load_cas_from_database() -> int:
+    """Load all active CAs from database and reconstruct signing objects.
+
+    Returns the number of CAs successfully loaded.
+    """
+    from plxvault import CertificateAuthority, KeyAlgorithm as RustKeyAlgorithm
+
+    # Map algorithm strings to Rust enum constructors
+    algo_map = {
+        "ecdsa-p256": RustKeyAlgorithm.ecdsa_p256,
+        "ecdsa-p384": RustKeyAlgorithm.ecdsa_p384,
+        "ed25519": RustKeyAlgorithm.ed25519,
+        "ml-dsa-65": RustKeyAlgorithm.ml_dsa_65,
+        "hybrid-ecdsa-mldsa": RustKeyAlgorithm.hybrid_ecdsa_mldsa,
+    }
+
+    cas = await CARepository.list_all(is_active=True, limit=1000)
+    loaded = 0
+
+    for ca_data in cas:
+        try:
+            algo_name = ca_data.get("key_algorithm", "ecdsa-p256")
+            algo_fn = algo_map.get(algo_name)
+            if not algo_fn:
+                logger.warning("Unknown algorithm for CA", ca_name=ca_data["name"], algorithm=algo_name)
+                continue
+
+            # Reconstruct CA from stored keys
+            ca = CertificateAuthority.from_stored(
+                ca_data["certificate_pem"],
+                ca_data["private_key_pem"],
+                algo_fn(),
+            )
+            _ca_cache[ca_data["id"]] = ca
+            loaded += 1
+            logger.info("Loaded CA from database", ca_name=ca_data["name"], ca_id=ca_data["id"])
+        except Exception as e:
+            logger.error("Failed to load CA", ca_name=ca_data["name"], error=str(e))
+
+    return loaded
 
 
 class CAType(str, Enum):

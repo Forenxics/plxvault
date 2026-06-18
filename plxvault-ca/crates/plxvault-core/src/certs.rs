@@ -7,6 +7,7 @@ use rcgen::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
+use x509_parser::prelude::*;
 
 use crate::error::{Error, Result};
 use crate::keys::KeyAlgorithm;
@@ -194,6 +195,78 @@ impl CertificateAuthority {
             },
             issued,
         ))
+    }
+
+    /// Reconstruct a CA from stored certificate and private key PEM
+    ///
+    /// This allows restoring a CA after server restart without generating new keys.
+    pub fn from_stored(
+        certificate_pem: &str,
+        private_key_pem: &str,
+        algorithm: KeyAlgorithm,
+    ) -> Result<Self> {
+        // Parse the certificate to extract the common name
+        let pem_data = pem::parse(certificate_pem)
+            .map_err(|e| Error::Parsing(format!("Failed to parse certificate PEM: {}", e)))?;
+
+        let (_, cert) = X509Certificate::from_der(pem_data.contents())
+            .map_err(|e| Error::Parsing(format!("Failed to parse X.509 certificate: {}", e)))?;
+
+        // Extract common name from subject
+        let common_name = cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|cn| cn.as_str().ok())
+            .ok_or_else(|| Error::Parsing("Certificate has no Common Name".to_string()))?
+            .to_string();
+
+        // Load the private key from PEM
+        let key_pair = RcgenKeyPair::from_pem(private_key_pem)
+            .map_err(|e| Error::Parsing(format!("Failed to parse private key PEM: {}", e)))?;
+
+        // Recreate certificate params with the same DN for signing capability
+        let mut params = CertificateParams::default();
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, &common_name);
+
+        // Also extract organization if present
+        if let Some(org) = cert.subject().iter_organization().next() {
+            if let Ok(org_str) = org.as_str() {
+                dn.push(DnType::OrganizationName, org_str);
+            }
+        }
+        params.distinguished_name = dn;
+
+        // CA constraints
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::CrlSign,
+            KeyUsagePurpose::DigitalSignature,
+        ];
+
+        // Use original validity from stored cert
+        let not_before = cert.validity().not_before.timestamp();
+        let not_after = cert.validity().not_after.timestamp();
+        params.not_before = OffsetDateTime::from_unix_timestamp(not_before)
+            .map_err(|e| Error::Parsing(format!("Invalid not_before timestamp: {}", e)))?;
+        params.not_after = OffsetDateTime::from_unix_timestamp(not_after)
+            .map_err(|e| Error::Parsing(format!("Invalid not_after timestamp: {}", e)))?;
+
+        // Self-sign with the loaded key to create a signing context
+        // Note: This creates a new cert internally, but we keep the original PEM for chains
+        let signing_cert = params
+            .self_signed(&key_pair)
+            .map_err(|e| Error::Signing(format!("Failed to create signing context: {}", e)))?;
+
+        Ok(Self {
+            certificate: signing_cert,
+            key_pair,
+            common_name,
+            cert_pem: certificate_pem.to_string(),
+            key_algorithm: algorithm,
+        })
     }
 
     /// Create an intermediate CA signed by this CA
@@ -517,5 +590,41 @@ mod tests {
 
         let leaf = intermediate_ca.issue_certificate(request).unwrap();
         assert_eq!(leaf.issuer_dn, "Test Intermediate CA");
+    }
+
+    #[test]
+    fn test_from_stored() {
+        // Create a CA
+        let (original_ca, issued) = CertificateAuthority::create_root(
+            "Stored CA Test",
+            Some("Test Org"),
+            KeyAlgorithm::EcdsaP256,
+            10,
+        )
+        .unwrap();
+
+        let cert_pem = issued.certificate_pem.clone();
+        let key_pem = issued.private_key_pem.unwrap();
+
+        // Reconstruct CA from stored data
+        let restored_ca = CertificateAuthority::from_stored(
+            &cert_pem,
+            &key_pem,
+            KeyAlgorithm::EcdsaP256,
+        )
+        .unwrap();
+
+        assert_eq!(restored_ca.common_name(), "Stored CA Test");
+
+        // Issue a certificate with restored CA
+        let request = CertificateRequest {
+            common_name: "restored.example.com".to_string(),
+            ..Default::default()
+        };
+
+        let cert = restored_ca.issue_certificate(request).unwrap();
+        assert!(cert.certificate_pem.contains("BEGIN CERTIFICATE"));
+        assert_eq!(cert.subject_dn, "restored.example.com");
+        assert_eq!(cert.issuer_dn, "Stored CA Test");
     }
 }
