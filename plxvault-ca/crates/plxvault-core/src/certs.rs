@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use ::time::{Duration, OffsetDateTime};
 use x509_parser::pem::parse_x509_pem;
-use x509_parser::prelude::X509Certificate;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::error::{Error, Result};
 use crate::keys::KeyAlgorithm;
