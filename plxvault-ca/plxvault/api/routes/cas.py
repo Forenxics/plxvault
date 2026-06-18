@@ -7,7 +7,12 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from plxvault.db import CARepository
+
 router = APIRouter()
+
+# In-memory cache for CA signing objects (reconstructed from DB on demand)
+_ca_cache: dict = {}
 
 
 class CAType(str, Enum):
@@ -51,7 +56,7 @@ class CAResponse(BaseModel):
     not_before: datetime
     not_after: datetime
     is_active: bool
-    parent_ca_name: Optional[str] = None
+    parent_ca_id: Optional[str] = None
     issued_certificates_count: int = 0
 
 
@@ -62,8 +67,22 @@ class CAListResponse(BaseModel):
     total: int
 
 
-# In-memory storage for demo (replace with database)
-_cas: dict = {}
+def _ca_dict_to_response(ca: dict) -> CAResponse:
+    """Convert CA dict to response model."""
+    return CAResponse(
+        id=ca["id"],
+        name=ca["name"],
+        common_name=ca["common_name"],
+        ca_type=ca["ca_type"],
+        key_algorithm=ca["key_algorithm"],
+        certificate_pem=ca["certificate_pem"],
+        fingerprint_sha256=ca["fingerprint_sha256"],
+        not_before=ca["not_before"],
+        not_after=ca["not_after"],
+        is_active=ca["is_active"],
+        parent_ca_id=ca.get("parent_ca_id"),
+        issued_certificates_count=ca.get("issued_certificates_count", 0),
+    )
 
 
 @router.get("", response_model=CAListResponse)
@@ -74,18 +93,20 @@ async def list_cas(
     offset: int = Query(0, ge=0),
 ):
     """List all Certificate Authorities."""
-    # Filter CAs
-    cas = list(_cas.values())
-
-    if ca_type:
-        cas = [ca for ca in cas if ca.get("ca_type") == ca_type]
-
-    if is_active is not None:
-        cas = [ca for ca in cas if ca.get("is_active") == is_active]
+    cas = await CARepository.list_all(
+        ca_type=ca_type.value if ca_type else None,
+        is_active=is_active,
+        limit=limit,
+        offset=offset,
+    )
+    total = await CARepository.count(
+        ca_type=ca_type.value if ca_type else None,
+        is_active=is_active,
+    )
 
     return CAListResponse(
-        cas=cas[offset : offset + limit],
-        total=len(cas),
+        cas=[_ca_dict_to_response(ca) for ca in cas],
+        total=total,
     )
 
 
@@ -100,7 +121,8 @@ async def create_ca(request: CreateCARequest):
         )
 
     # Check if CA name already exists
-    if request.name in _cas:
+    existing = await CARepository.get_by_name(request.name)
+    if existing:
         raise HTTPException(status_code=409, detail=f"CA '{request.name}' already exists")
 
     # Map algorithm
@@ -112,6 +134,8 @@ async def create_ca(request: CreateCARequest):
         KeyAlgorithm.HYBRID_ECDSA_MLDSA: RustKeyAlgorithm.hybrid_ecdsa_mldsa,
     }
     algo = algo_map[request.key_algorithm]()
+
+    parent_ca_id = None
 
     if request.ca_type == CAType.ROOT:
         # Create root CA
@@ -128,13 +152,23 @@ async def create_ca(request: CreateCARequest):
                 status_code=400, detail="parent_ca_name required for intermediate CA"
             )
 
-        parent = _cas.get(request.parent_ca_name)
+        parent = await CARepository.get_by_name(request.parent_ca_name)
         if not parent:
             raise HTTPException(
                 status_code=404, detail=f"Parent CA '{request.parent_ca_name}' not found"
             )
 
-        ca, cert = parent["_ca_object"].create_intermediate(
+        parent_ca_id = parent["id"]
+
+        # Get parent CA object from cache
+        if parent["id"] not in _ca_cache:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Parent CA '{request.parent_ca_name}' not loaded. Server may have restarted.",
+            )
+
+        parent_ca_obj = _ca_cache[parent["id"]]
+        ca, cert = parent_ca_obj.create_intermediate(
             request.common_name,
             algo,
             request.validity_years,
@@ -142,41 +176,34 @@ async def create_ca(request: CreateCARequest):
             request.organization,
         )
 
-    # Store CA
-    import uuid
+    # Store in database
+    ca_data = await CARepository.create(
+        name=request.name,
+        common_name=cert.subject_dn,
+        ca_type=request.ca_type.value,
+        key_algorithm=request.key_algorithm.value,
+        certificate_pem=cert.certificate_pem,
+        private_key_pem=cert.private_key_pem,
+        fingerprint_sha256=cert.fingerprint_sha256,
+        not_before=cert.not_before,
+        not_after=cert.not_after,
+        parent_ca_id=parent_ca_id,
+    )
 
-    ca_id = str(uuid.uuid4())
-    ca_data = {
-        "id": ca_id,
-        "name": request.name,
-        "common_name": cert.subject_dn,
-        "ca_type": request.ca_type.value,
-        "key_algorithm": request.key_algorithm.value,
-        "certificate_pem": cert.certificate_pem,
-        "fingerprint_sha256": cert.fingerprint_sha256,
-        "not_before": datetime.fromtimestamp(cert.not_before),
-        "not_after": datetime.fromtimestamp(cert.not_after),
-        "is_active": True,
-        "parent_ca_name": request.parent_ca_name,
-        "issued_certificates_count": 0,
-        "_ca_object": ca,  # Store CA object for signing
-        "_private_key_pem": cert.private_key_pem,
-    }
+    # Cache the CA object for signing
+    _ca_cache[ca_data["id"]] = ca
 
-    _cas[request.name] = ca_data
-
-    # Return without internal fields
-    return CAResponse(**{k: v for k, v in ca_data.items() if not k.startswith("_")})
+    return _ca_dict_to_response(ca_data)
 
 
 @router.get("/{ca_name}", response_model=CAResponse)
 async def get_ca(ca_name: str):
     """Get CA details."""
-    ca = _cas.get(ca_name)
+    ca = await CARepository.get_by_name(ca_name)
     if not ca:
         raise HTTPException(status_code=404, detail=f"CA '{ca_name}' not found")
 
-    return CAResponse(**{k: v for k, v in ca.items() if not k.startswith("_")})
+    return _ca_dict_to_response(ca)
 
 
 @router.get("/{ca_name}/certificate")
@@ -185,7 +212,7 @@ async def download_ca_certificate(
     include_chain: bool = Query(True),
 ):
     """Download CA certificate."""
-    ca = _cas.get(ca_name)
+    ca = await CARepository.get_by_name(ca_name)
     if not ca:
         raise HTTPException(status_code=404, detail=f"CA '{ca_name}' not found")
 
@@ -193,3 +220,8 @@ async def download_ca_certificate(
         "certificate_pem": ca["certificate_pem"],
         "fingerprint_sha256": ca["fingerprint_sha256"],
     }
+
+
+def get_ca_object(ca_id: str):
+    """Get cached CA object for signing."""
+    return _ca_cache.get(ca_id)

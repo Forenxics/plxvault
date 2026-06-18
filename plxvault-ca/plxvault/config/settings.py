@@ -1,6 +1,7 @@
 """PlxVault configuration settings."""
 
 import os
+from pathlib import Path
 from typing import List
 
 
@@ -15,10 +16,10 @@ class Settings:
         self.host: str = os.getenv("PLXVAULT_HOST", "0.0.0.0")
         self.port: int = int(os.getenv("PLXVAULT_PORT", "8000"))
 
-        # Database
-        self.database_url: str = os.getenv(
-            "DATABASE_URL",
-            "postgresql+asyncpg://plxvault:plxvault@localhost:5432/plxvault",
+        # Database (SQLite by default)
+        self.database_path: str = os.getenv(
+            "PLXVAULT_DB_PATH",
+            str(Path.home() / ".plxvault" / "plxvault.db"),
         )
 
         # Redis

@@ -13,6 +13,7 @@ import structlog
 
 from plxvault.api.routes import certificates, cas, health
 from plxvault.config import settings
+from plxvault.db import init_db, close_db
 
 logger = structlog.get_logger()
 
@@ -24,17 +25,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         "Starting PlxVault CA",
         version="0.1.0",
         environment=settings.environment,
+        database=settings.database_path,
     )
 
-    # Initialize database, event bus, etc.
-    # await init_db()
-    # app.state.event_bus = EventBus()
+    # Initialize SQLite database
+    await init_db(settings.database_path)
+    logger.info("Database initialized", path=settings.database_path)
 
     yield
 
     # Cleanup
     logger.info("Shutting down PlxVault CA")
-    # await close_db()
+    await close_db()
 
 
 app = FastAPI(

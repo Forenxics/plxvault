@@ -7,6 +7,9 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from plxvault.db import CARepository, CertificateRepository
+from plxvault.api.routes.cas import get_ca_object
+
 router = APIRouter()
 
 
@@ -103,8 +106,26 @@ class BulkIssueResponse(BaseModel):
     failed: List[dict]
 
 
-# In-memory storage for demo
-_certificates: dict = {}
+def _cert_dict_to_response(cert: dict) -> CertificateResponse:
+    """Convert certificate dict to response model."""
+    return CertificateResponse(
+        id=cert["id"],
+        serial_number=cert["serial_number"],
+        common_name=cert["common_name"],
+        status=cert["status"],
+        certificate_pem=cert["certificate_pem"],
+        private_key_pem=cert.get("private_key_pem"),
+        chain_pem=cert.get("chain_pem"),
+        fingerprint_sha256=cert["fingerprint_sha256"],
+        not_before=cert["not_before"],
+        not_after=cert["not_after"],
+        subject_dn=cert["subject_dn"],
+        issuer_dn=cert["issuer_dn"],
+        key_algorithm=cert["key_algorithm"],
+        certificate_type=cert["certificate_type"],
+        revocation_date=cert.get("revocation_date"),
+        revocation_reason=cert.get("revocation_reason"),
+    )
 
 
 @router.post("", response_model=CertificateResponse)
@@ -113,21 +134,33 @@ async def issue_certificate(
     background_tasks: BackgroundTasks,
 ):
     """Issue a new certificate."""
-    from plxvault.api.routes.cas import _cas
-
     # Get CA
-    ca_name = request.ca_name or "default"
-    if ca_name == "default" and _cas:
-        ca_name = list(_cas.keys())[0]
+    cas = await CARepository.list_all(is_active=True, limit=1)
+    if not cas:
+        raise HTTPException(
+            status_code=404,
+            detail="No active CA found. Create a CA first.",
+        )
 
-    ca_data = _cas.get(ca_name)
+    ca_name = request.ca_name
+    if ca_name:
+        ca_data = await CARepository.get_by_name(ca_name)
+    else:
+        ca_data = cas[0]
+
     if not ca_data:
         raise HTTPException(
             status_code=404,
-            detail=f"CA '{ca_name}' not found. Create a CA first.",
+            detail=f"CA '{ca_name}' not found.",
         )
 
-    ca = ca_data["_ca_object"]
+    # Get CA object for signing
+    ca = get_ca_object(ca_data["id"])
+    if not ca:
+        raise HTTPException(
+            status_code=503,
+            detail=f"CA '{ca_data['name']}' not loaded. Server may have restarted.",
+        )
 
     # Issue certificate
     try:
@@ -142,36 +175,26 @@ async def issue_certificate(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Store certificate
-    import uuid
+    # Store in database
+    cert_data = await CertificateRepository.create(
+        serial_number=cert.serial_number,
+        common_name=request.common_name,
+        certificate_type=request.certificate_type.value,
+        certificate_pem=cert.certificate_pem,
+        private_key_pem=cert.private_key_pem,
+        chain_pem=cert.chain_pem,
+        fingerprint_sha256=cert.fingerprint_sha256,
+        not_before=cert.not_before,
+        not_after=cert.not_after,
+        subject_dn=cert.subject_dn,
+        issuer_dn=cert.issuer_dn,
+        key_algorithm=request.key_algorithm.value,
+        ca_id=ca_data["id"],
+        san_dns=request.san_dns,
+        san_ips=request.san_ips,
+    )
 
-    cert_id = str(uuid.uuid4())
-    cert_data = {
-        "id": cert_id,
-        "serial_number": cert.serial_number,
-        "common_name": request.common_name,
-        "status": CertificateStatus.ACTIVE.value,
-        "certificate_pem": cert.certificate_pem,
-        "private_key_pem": cert.private_key_pem,
-        "chain_pem": cert.chain_pem,
-        "fingerprint_sha256": cert.fingerprint_sha256,
-        "not_before": datetime.fromtimestamp(cert.not_before),
-        "not_after": datetime.fromtimestamp(cert.not_after),
-        "subject_dn": cert.subject_dn,
-        "issuer_dn": cert.issuer_dn,
-        "key_algorithm": request.key_algorithm.value,
-        "certificate_type": request.certificate_type.value,
-        "revocation_date": None,
-        "revocation_reason": None,
-        "ca_name": ca_name,
-    }
-
-    _certificates[cert_id] = cert_data
-
-    # Update CA certificate count
-    ca_data["issued_certificates_count"] = ca_data.get("issued_certificates_count", 0) + 1
-
-    return CertificateResponse(**cert_data)
+    return _cert_dict_to_response(cert_data)
 
 
 @router.get("", response_model=CertificateListResponse)
@@ -184,27 +207,34 @@ async def list_certificates(
     offset: int = Query(0, ge=0),
 ):
     """List certificates with optional filters."""
-    certs = list(_certificates.values())
-
-    # Apply filters
-    if status:
-        certs = [c for c in certs if c["status"] == status.value]
-
-    if common_name:
-        certs = [c for c in certs if common_name.lower() in c["common_name"].lower()]
-
+    ca_id = None
     if ca_name:
-        certs = [c for c in certs if c.get("ca_name") == ca_name]
+        ca = await CARepository.get_by_name(ca_name)
+        if ca:
+            ca_id = ca["id"]
 
     if expiring_within_days:
-        from datetime import timedelta
+        certs = await CertificateRepository.get_expiring(expiring_within_days, ca_id)
+        return CertificateListResponse(
+            certificates=[_cert_dict_to_response(c) for c in certs],
+            total=len(certs),
+        )
 
-        expiry_threshold = datetime.utcnow() + timedelta(days=expiring_within_days)
-        certs = [c for c in certs if c["not_after"] <= expiry_threshold]
+    certs = await CertificateRepository.list_all(
+        status=status.value if status else None,
+        common_name=common_name,
+        ca_id=ca_id,
+        limit=limit,
+        offset=offset,
+    )
+    total = await CertificateRepository.count(
+        status=status.value if status else None,
+        ca_id=ca_id,
+    )
 
     return CertificateListResponse(
-        certificates=certs[offset : offset + limit],
-        total=len(certs),
+        certificates=[_cert_dict_to_response(c) for c in certs],
+        total=total,
     )
 
 
@@ -214,29 +244,28 @@ async def get_expiring_certificates(
     ca_name: Optional[str] = None,
 ):
     """Get certificates expiring within specified days."""
-    from datetime import timedelta
-
-    expiry_threshold = datetime.utcnow() + timedelta(days=days)
-    certs = [
-        c
-        for c in _certificates.values()
-        if c["not_after"] <= expiry_threshold and c["status"] == "active"
-    ]
-
+    ca_id = None
     if ca_name:
-        certs = [c for c in certs if c.get("ca_name") == ca_name]
+        ca = await CARepository.get_by_name(ca_name)
+        if ca:
+            ca_id = ca["id"]
 
-    return CertificateListResponse(certificates=certs, total=len(certs))
+    certs = await CertificateRepository.get_expiring(days, ca_id)
+
+    return CertificateListResponse(
+        certificates=[_cert_dict_to_response(c) for c in certs],
+        total=len(certs),
+    )
 
 
 @router.get("/{certificate_id}", response_model=CertificateResponse)
 async def get_certificate(certificate_id: str):
     """Get certificate details."""
-    cert = _certificates.get(certificate_id)
+    cert = await CertificateRepository.get_by_id(certificate_id)
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
 
-    return CertificateResponse(**cert)
+    return _cert_dict_to_response(cert)
 
 
 @router.post("/{certificate_id}/revoke")
@@ -245,16 +274,14 @@ async def revoke_certificate(
     request: RevokeCertificateRequest,
 ):
     """Revoke a certificate."""
-    cert = _certificates.get(certificate_id)
+    cert = await CertificateRepository.get_by_id(certificate_id)
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
 
     if cert["status"] == CertificateStatus.REVOKED.value:
         raise HTTPException(status_code=400, detail="Certificate already revoked")
 
-    cert["status"] = CertificateStatus.REVOKED.value
-    cert["revocation_date"] = datetime.utcnow()
-    cert["revocation_reason"] = request.reason.value
+    await CertificateRepository.revoke(certificate_id, request.reason.value)
 
     return {"status": "revoked", "certificate_id": certificate_id}
 
@@ -265,7 +292,7 @@ async def renew_certificate(
     validity_days: int = Query(365, ge=1, le=3650),
 ):
     """Renew a certificate."""
-    cert = _certificates.get(certificate_id)
+    cert = await CertificateRepository.get_by_id(certificate_id)
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
 
@@ -273,7 +300,8 @@ async def renew_certificate(
     request = IssueCertificateRequest(
         common_name=cert["common_name"],
         validity_days=validity_days,
-        ca_name=cert.get("ca_name"),
+        san_dns=cert.get("san_dns", []),
+        san_ips=cert.get("san_ips", []),
     )
 
     return await issue_certificate(request, BackgroundTasks())
