@@ -6,8 +6,9 @@ use rcgen::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use time::{Duration, OffsetDateTime};
-use x509_parser::prelude::*;
+use ::time::{Duration, OffsetDateTime};
+use x509_parser::pem::parse_x509_pem;
+use x509_parser::prelude::X509Certificate;
 
 use crate::error::{Error, Result};
 use crate::keys::KeyAlgorithm;
@@ -205,11 +206,11 @@ impl CertificateAuthority {
         private_key_pem: &str,
         algorithm: KeyAlgorithm,
     ) -> Result<Self> {
-        // Parse the certificate to extract the common name
-        let pem_data = pem::parse(certificate_pem)
+        // Parse the certificate PEM to extract the X.509 certificate
+        let (_, pem) = parse_x509_pem(certificate_pem.as_bytes())
             .map_err(|e| Error::Parsing(format!("Failed to parse certificate PEM: {}", e)))?;
 
-        let (_, cert) = X509Certificate::from_der(pem_data.contents())
+        let (_, cert) = X509Certificate::from_der(&pem.contents)
             .map_err(|e| Error::Parsing(format!("Failed to parse X.509 certificate: {}", e)))?;
 
         // Extract common name from subject
@@ -507,8 +508,9 @@ impl CertificateAuthority {
     }
 
     fn calculate_fingerprint_from_pem(pem_str: &str) -> Result<String> {
-        let pem_data = pem::parse(pem_str).map_err(|e| Error::Parsing(e.to_string()))?;
-        let hash = Sha256::digest(pem_data.contents());
+        let (_, pem) = parse_x509_pem(pem_str.as_bytes())
+            .map_err(|e| Error::Parsing(format!("Failed to parse PEM: {}", e)))?;
+        let hash = Sha256::digest(&pem.contents);
         Ok(hex::encode(hash))
     }
 }
