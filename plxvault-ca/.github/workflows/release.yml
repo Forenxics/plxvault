@@ -1,0 +1,167 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.1.0)'
+        required: false
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheel
+        run: maturin build --release -m crates/plxvault-python/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  build-deb:
+    name: Build Debian package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install dependencies
+        run: |
+          pip install maturin
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev fakeroot
+
+      - name: Build wheel
+        run: maturin build --release -m crates/plxvault-python/Cargo.toml
+
+      - name: Create Debian package
+        run: |
+          VERSION="${{ github.event.inputs.version || '0.1.0' }}"
+          PKG_NAME="plxvault"
+          PKG_DIR="${PKG_NAME}_${VERSION}_amd64"
+
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/local/lib/python3.11/dist-packages"
+          mkdir -p "${PKG_DIR}/usr/local/bin"
+
+          # Extract wheel
+          WHEEL=$(ls target/wheels/*.whl | head -1)
+          unzip -q "$WHEEL" -d "${PKG_DIR}/usr/local/lib/python3.11/dist-packages/"
+
+          # Create control file
+          cat > "${PKG_DIR}/DEBIAN/control" << EOF
+          Package: ${PKG_NAME}
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: python3 (>= 3.11), python3-fastapi, python3-uvicorn
+          Maintainer: PlxVault Team <team@plxvault.io>
+          Description: PlxVault CA - AI-native, post-quantum ready PKI
+           A modern Certificate Authority with:
+           - Post-quantum cryptography support (ML-DSA, hybrid schemes)
+           - AI integration via MCP server
+           - REST API for certificate management
+          EOF
+
+          # Create CLI wrapper
+          cat > "${PKG_DIR}/usr/local/bin/plxvault" << 'SCRIPT'
+          #!/usr/bin/env python3
+          from plxvault.cli import main
+          if __name__ == "__main__":
+              main()
+          SCRIPT
+          chmod +x "${PKG_DIR}/usr/local/bin/plxvault"
+
+          cat > "${PKG_DIR}/usr/local/bin/plxvault-mcp" << 'SCRIPT'
+          #!/usr/bin/env python3
+          from plxvault.mcp.server import main
+          if __name__ == "__main__":
+              main()
+          SCRIPT
+          chmod +x "${PKG_DIR}/usr/local/bin/plxvault-mcp"
+
+          # Build package
+          fakeroot dpkg-deb --build "${PKG_DIR}"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-package
+          path: "*.deb"
+
+  release:
+    name: Create Release
+    needs: [build-wheels, build-deb]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find artifacts -name "*.whl" -exec cp {} release/ \;
+          find artifacts -name "*.deb" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true
